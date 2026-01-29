@@ -66,14 +66,45 @@ def extract_pdf_text(path: Path) -> Optional[str]:
     try:
         import PyPDF2  # type: ignore
     except ImportError:
+        PyPDF2 = None
+
+    if PyPDF2 is not None:
+        try:
+            reader = PyPDF2.PdfReader(str(path))
+            parts = []
+            for page in reader.pages:
+                parts.append(page.extract_text() or "")
+            text = "\n".join(parts).strip()
+            if text:
+                return text
+        except Exception:
+            pass
+
+    try:
+        import pdfplumber  # type: ignore
+    except ImportError:
+        pdfplumber = None
+
+    if pdfplumber is not None:
+        try:
+            parts = []
+            with pdfplumber.open(str(path)) as pdf:
+                for page in pdf.pages:
+                    parts.append(page.extract_text() or "")
+            text = "\n".join(parts).strip()
+            if text:
+                return text
+        except Exception:
+            pass
+
+    try:
+        from pdfminer.high_level import extract_text  # type: ignore
+    except ImportError:
         return None
 
     try:
-        reader = PyPDF2.PdfReader(str(path))
-        parts = []
-        for page in reader.pages:
-            parts.append(page.extract_text() or "")
-        return "\n".join(parts).strip()
+        text = extract_text(str(path)).strip()
+        return text or None
     except Exception:
         return None
 
