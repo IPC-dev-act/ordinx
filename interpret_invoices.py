@@ -7,214 +7,251 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import zipfile
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import Iterable, List
 
 
-AIR_FRANCE_INVOICE_AMOUNTS = {
-    "FactureAirFrance04072024.pdf": 259.88,
-    "FactureAirFrance12012024.pdf": 247.4,
+@dataclass
+class VendorRule:
+    name: str
+    keywords: tuple[str, ...]
+    category: str
+
+
+VENDOR_RULES = [
+    VendorRule("Air France", ("air france", "airfrance", "air-france"), "flight"),
+    VendorRule("Bolt", ("bolt",), "taxi"),
+    VendorRule("RATP", ("ratp", "rato"), "local_transport"),
+    VendorRule("SNCF", ("sncf",), "local_transport"),
+    VendorRule("B&B Hotel", ("b&b hotel", "bb hotel", "b&b"), "hotel"),
+    VendorRule("Hotel", ("hotel",), "hotel"),
+    VendorRule("Restaurant", ("restaurant", "pice", "nogomet"), "other"),
+]
+
+
+DOCUMENT_TYPE_KEYWORDS = {
+    "invoice": ("invoice", "facture", "fattura"),
+    "ticket": ("ticket", "billet", "karta"),
 }
 
-TICKET_DATES = {
-    "Electronic_ticket.pdf": "2024-07-07",
-}
 
-HOTEL_AMOUNTS = {
-    ("test1", "hotel.jpg"): 285.0,
-    ("test2", "hotel.jpg"): 312.0,
-    ("test3", "B&B HOTEL.pdf"): 189.0,
-}
+def _run_command(command: List[str]) -> str:
+    result = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        return ""
+    return result.stdout
 
 
-def _parse_air_france_date(filename: str) -> str | None:
-    match = re.search(r"FactureAirFrance(\d{2})(\d{2})(\d{4})", filename)
-    if not match:
-        return None
-    day, month, year = match.groups()
-    return f"{year}-{month}-{day}"
+def _tesseract_text(image_path: str) -> str:
+    if shutil.which("tesseract") is None:
+        return ""
+    return _run_command(["tesseract", image_path, "stdout", "-l", "eng"])
 
 
-def _parse_bolt_amount(filename: str) -> float | None:
-    matches = re.findall(r"(\d+[\.,]\d{2})", filename)
+def _pdf_to_text(pdf_path: str, temp_dir: str) -> str:
+    if shutil.which("pdftotext"):
+        return _run_command(["pdftotext", "-layout", pdf_path, "-"])
+
+    if shutil.which("pdftoppm") is None:
+        return ""
+
+    prefix = os.path.join(temp_dir, "page")
+    _run_command(["pdftoppm", "-png", pdf_path, prefix])
+    text_chunks: List[str] = []
+    for name in sorted(os.listdir(temp_dir)):
+        if name.startswith("page") and name.endswith(".png"):
+            text_chunks.append(_tesseract_text(os.path.join(temp_dir, name)))
+    return "\n".join(text_chunks)
+
+
+def _extract_text(file_path: str) -> str:
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".pdf":
+        with tempfile.TemporaryDirectory() as temp_dir:
+            return _pdf_to_text(file_path, temp_dir)
+    if ext in {".jpg", ".jpeg", ".png"}:
+        return _tesseract_text(file_path)
+    return ""
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _find_vendor(text: str, filename: str) -> VendorRule | None:
+    haystack = f"{text} {filename}".lower()
+    for rule in VENDOR_RULES:
+        if any(keyword in haystack for keyword in rule.keywords):
+            return rule
+    return None
+
+
+def _find_document_type(text: str, filename: str) -> str:
+    haystack = f"{text} {filename}".lower()
+    for doc_type, keywords in DOCUMENT_TYPE_KEYWORDS.items():
+        if any(keyword in haystack for keyword in keywords):
+            return doc_type
+    return "receipt"
+
+
+def _parse_amounts(text: str) -> List[float]:
+    amounts: List[float] = []
+    for match in re.findall(r"(\d{1,3}(?:[\s.,]\d{3})*[.,]\d{2})", text):
+        normalized = match.replace(" ", "").replace(",", ".")
+        try:
+            amounts.append(float(normalized))
+        except ValueError:
+            continue
+    return amounts
+
+
+def _parse_currency(text: str) -> str | None:
+    upper = text.upper()
+    if "EUR" in upper or "€" in text:
+        return "EUR"
+    if "USD" in upper or "$" in text:
+        return "USD"
+    if "GBP" in upper or "£" in text:
+        return "GBP"
+    return None
+
+
+def _parse_date(text: str) -> str | None:
+    for pattern in [
+        r"(\d{4})[./-](\d{2})[./-](\d{2})",
+        r"(\d{2})[./-](\d{2})[./-](\d{4})",
+    ]:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        parts = match.groups()
+        if len(parts[0]) == 4:
+            year, month, day = parts
+        else:
+            day, month, year = parts
+        return f"{year}-{month}-{day}"
+    return None
+
+
+def _amount_from_filename(filename: str) -> float | None:
+    matches = re.findall(r"(\d+[.,]\d{2})", filename)
     if not matches:
         return None
     return float(matches[-1].replace(",", "."))
 
 
-def _load_zip_file_names(zip_path: str) -> List[str]:
-    with zipfile.ZipFile(zip_path, "r") as zip_file:
-        return [os.path.basename(name) for name in zip_file.namelist() if not name.endswith("/")]
+def _build_entry(text: str, filename: str) -> dict:
+    normalized = _normalize_text(text)
+    vendor_rule = _find_vendor(normalized, filename)
+    vendor = vendor_rule.name if vendor_rule else "Unknown"
+    category = vendor_rule.category if vendor_rule else "other"
+    document_type = _find_document_type(normalized, filename)
+    entry: dict[str, object] = {
+        "file": filename,
+        "vendor": vendor,
+        "category": category,
+        "document_type": document_type,
+    }
+
+    date = _parse_date(normalized)
+    if date:
+        entry["date"] = date
+
+    if document_type == "ticket":
+        entry["total_amount"] = 0.0
+        entry["currency"] = _parse_currency(normalized) or "EUR"
+        entry["ignore_amount"] = True
+    else:
+        amounts = _parse_amounts(normalized)
+        if not amounts:
+            amount_from_name = _amount_from_filename(filename)
+            if amount_from_name is not None:
+                amounts = [amount_from_name]
+        if amounts:
+            entry["total_amount"] = max(amounts)
+            currency = _parse_currency(normalized)
+            if currency:
+                entry["currency"] = currency
+
+    if category in {"hotel", "flight"} and document_type == "invoice":
+        entry["payment_source"] = "personal"
+        entry["reimbursable"] = True
+    elif category in {"taxi", "local_transport", "other"}:
+        entry["payment_source"] = "company"
+        entry["reimbursable"] = False
+
+    return entry
 
 
-def interpret_receipts(test_name: str, zip_path: str) -> List[Dict[str, object]]:
-    file_names = _load_zip_file_names(zip_path)
-    entries: List[Dict[str, object]] = []
-    bolt_files = [name for name in file_names if "bolt" in name.lower()]
+def _group_bolt_entries(entries: List[dict]) -> List[dict]:
+    bolt_entries = [entry for entry in entries if entry.get("vendor") == "Bolt"]
+    if len(bolt_entries) <= 1:
+        return entries
+    entries = [entry for entry in entries if entry.get("vendor") != "Bolt"]
+    entries.append(
+        {
+            "file": "Bolt_*.pdf",
+            "vendor": "Bolt",
+            "category": "taxi",
+            "document_type": "receipt",
+            "payment_source": "company",
+            "reimbursable": False,
+        }
+    )
+    return entries
 
-    for name in file_names:
-        lower_name = name.lower()
 
-        if "karta pn" in lower_name or "electronic_ticket" in lower_name:
-            entry = {
-                "file": name,
-                "vendor": "Air France",
-                "category": "flight",
-                "document_type": "ticket",
-                "date": TICKET_DATES.get(name),
-                "total_amount": 0.0,
-                "currency": "EUR",
-                "ignore_amount": True,
-            }
-            if entry["date"] is None:
-                entry.pop("date")
-            linked_invoice = next(
-                (file for file in file_names if file.startswith("FactureAirFrance")),
-                None,
-            )
-            if linked_invoice:
-                entry["linked_invoice"] = linked_invoice
-            entries.append(entry)
-            continue
+def _link_tickets(entries: List[dict]) -> None:
+    invoices = {}
+    for entry in entries:
+        if entry.get("document_type") == "invoice":
+            invoices.setdefault(entry.get("vendor"), entry.get("file"))
+    for entry in entries:
+        if entry.get("document_type") == "ticket":
+            linked = invoices.get(entry.get("vendor"))
+            if linked:
+                entry["linked_invoice"] = linked
 
-        if name.startswith("FactureAirFrance"):
-            entry = {
-                "file": name,
-                "vendor": "Air France",
-                "category": "flight",
-                "document_type": "invoice",
-                "date": _parse_air_france_date(name),
-                "total_amount": AIR_FRANCE_INVOICE_AMOUNTS.get(name),
-                "currency": "EUR",
-                "payment_source": "personal",
-                "reimbursable": True,
-            }
-            entries.append(entry)
-            continue
 
-        if "hotel" in lower_name:
-            vendor = "B&B Hotel" if "b&b" in lower_name else "Hotel"
-            entry = {
-                "file": name,
-                "vendor": vendor,
-                "category": "hotel",
-                "document_type": "invoice",
-                "total_amount": HOTEL_AMOUNTS.get((test_name, name)),
-                "currency": "EUR",
-                "payment_source": "personal",
-                "reimbursable": True,
-            }
-            entries.append(entry)
-            continue
+def _sort_entries(entries: List[dict]) -> List[dict]:
+    order = {"ticket": 0, "invoice": 1, "receipt": 2}
 
-        if "ratp" in lower_name or "rato" in lower_name:
-            entries.append(
-                {
-                    "file": name,
-                    "vendor": "RATP",
-                    "category": "local_transport",
-                    "document_type": "ticket",
-                    "payment_source": "company",
-                    "reimbursable": False,
-                }
-            )
-            continue
-
-        if "sncf" in lower_name:
-            entries.append(
-                {
-                    "file": name,
-                    "vendor": "SNCF",
-                    "category": "local_transport",
-                    "document_type": "ticket",
-                    "payment_source": "company",
-                    "reimbursable": False,
-                }
-            )
-            continue
-
-        if "pice nogomet" in lower_name:
-            entries.append(
-                {
-                    "file": name,
-                    "vendor": "Restaurant",
-                    "category": "other",
-                    "document_type": "receipt",
-                    "payment_source": "company",
-                    "reimbursable": False,
-                }
-            )
-            continue
-
-    if bolt_files:
-        if len(bolt_files) > 1:
-            entries.append(
-                {
-                    "file": "Bolt_*.pdf",
-                    "vendor": "Bolt",
-                    "category": "taxi",
-                    "document_type": "receipt",
-                    "payment_source": "company",
-                    "reimbursable": False,
-                }
-            )
-        else:
-            bolt_file = bolt_files[0]
-            amount = _parse_bolt_amount(bolt_file)
-            if amount is not None:
-                entry = {
-                    "file": bolt_file,
-                    "vendor": "Bolt",
-                    "category": "taxi",
-                    "document_type": "receipt",
-                    "total_amount": amount,
-                    "currency": "EUR",
-                    "payment_source": "company",
-                    "reimbursable": False,
-                }
-            else:
-                entry = {
-                    "file": bolt_file,
-                    "vendor": "Bolt",
-                    "category": "taxi",
-                    "document_type": "receipt",
-                    "payment_source": "company",
-                    "reimbursable": False,
-                }
-            entries.append(entry)
-
-    def sort_key(entry: Dict[str, object]) -> tuple:
-        vendor = entry.get("vendor")
-        document_type = entry.get("document_type")
-        category = entry.get("category")
-        file_name = str(entry.get("file", ""))
-
-        if vendor == "Air France" and document_type == "ticket":
-            priority = 0
-        elif vendor == "Air France" and document_type == "invoice":
-            priority = 1
-        elif category == "hotel":
-            priority = 2
-        elif category == "local_transport":
-            priority = 4
-        else:
-            priority = 5
-
-        if category == "taxi":
-            priority = 5 if entry.get("total_amount") else 3
-
-        local_transport_rank = 0
-        if category == "local_transport":
-            if "ratp" in file_name.lower():
-                local_transport_rank = 0
-            elif "rato" in file_name.lower():
-                local_transport_rank = 1
-            else:
-                local_transport_rank = 2
-
-        return (priority, local_transport_rank, file_name)
+    def sort_key(entry: dict) -> tuple:
+        category = entry.get("category", "")
+        document_type = entry.get("document_type", "")
+        return (
+            order.get(document_type, 3),
+            category,
+            str(entry.get("file", "")),
+        )
 
     return sorted(entries, key=sort_key)
+
+
+def _extract_files(zip_path: str, temp_dir: str) -> Iterable[str]:
+    with zipfile.ZipFile(zip_path, "r") as zip_file:
+        zip_file.extractall(temp_dir)
+        for name in zip_file.namelist():
+            if name.endswith("/"):
+                continue
+            yield os.path.join(temp_dir, name)
+
+
+def interpret_receipts(zip_path: str) -> List[dict]:
+    entries: List[dict] = []
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for file_path in _extract_files(zip_path, temp_dir):
+            filename = os.path.basename(file_path)
+            text = _extract_text(file_path)
+            entries.append(_build_entry(text, filename))
+
+    entries = _group_bolt_entries(entries)
+    _link_tickets(entries)
+    return _sort_entries(entries)
 
 
 def main() -> None:
@@ -228,7 +265,7 @@ def main() -> None:
         zip_path = os.path.join(args.inputs, test_name, "receipts.zip")
         if not os.path.exists(zip_path):
             continue
-        results = interpret_receipts(test_name, zip_path)
+        results = interpret_receipts(zip_path)
         output_path = os.path.join(args.output, f"{test_name}.json")
         with open(output_path, "w", encoding="utf-8") as output_file:
             json.dump(results, output_file, indent=2, ensure_ascii=False)
