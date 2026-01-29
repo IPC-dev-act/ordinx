@@ -1,0 +1,51 @@
+[
+  {
+    "file": "Karta PN1.pdf",
+    "vendor": "Air France",
+    "category": "flight",
+    "document_type": "ticket",
+    "total_amount": 0.0,
+    "currency": "EUR",
+    "ignore_amount": true,
+    "linked_invoice": "FactureAirFrance12012024.pdf"
+  },
+  {
+    "file": "FactureAirFrance12012024.pdf",
+    "vendor": "Air France",
+    "category": "flight",
+    "document_type": "invoice",
+    "date": "2024-01-12",
+    "total_amount": 247.4,
+    "currency": "EUR",
+    "payment_source": "personal",
+    "reimbursable": true
+  },
+  {
+    "file": "B&B HOTEL.pdf",
+    "vendor": "B&B Hotel",
+    "category": "hotel",
+    "document_type": "invoice",
+    "total_amount": 189.0,
+    "currency": "EUR",
+    "payment_source": "personal",
+    "reimbursable": true
+  },
+  {
+    "file": "sncf 1490.jpg",
+    "vendor": "SNCF",
+    "category": "local_transport",
+    "document_type": "ticket",
+    "payment_source": "company",
+    "reimbursable": false
+  },
+  {
+    "file": "bolt 18.01.-25,70.pdf",
+    "vendor": "Bolt",
+    "category": "taxi",
+    "document_type": "receipt",
+    "total_amount": 25.7,
+    "currency": "EUR",
+    "payment_source": "company",
+    "reimbursable": false
+  }
+]

@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# generated outputs
+results/
+old/
+inputs/*/.tmp_extracted/
+inputs/*/receipts/
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.xlsx
+
+!template_final.xlsx

@@ -1,0 +1,45 @@
+[
+  {
+    "file": "Karta pn2.pdf",
+    "vendor": "Air France",
+    "category": "flight",
+    "document_type": "ticket",
+    "total_amount": 0.0,
+    "currency": "EUR",
+    "ignore_amount": true
+  },
+  {
+    "file": "hotel.jpg",
+    "vendor": "Hotel",
+    "category": "hotel",
+    "document_type": "invoice",
+    "total_amount": 285.0,
+    "currency": "EUR",
+    "payment_source": "personal",
+    "reimbursable": true
+  },
+  {
+    "file": "bolt.pdf",
+    "vendor": "Bolt",
+    "category": "taxi",
+    "document_type": "receipt",
+    "payment_source": "company",
+    "reimbursable": false
+  },
+  {
+    "file": "ratp.jpg",
+    "vendor": "RATP",
+    "category": "local_transport",
+    "document_type": "ticket",
+    "payment_source": "company",
+    "reimbursable": false
+  },
+  {
+    "file": "rato1420.jpg",
+    "vendor": "RATP",
+    "category": "local_transport",
+    "document_type": "ticket",
+    "payment_source": "company",
+    "reimbursable": false
+  }
+]

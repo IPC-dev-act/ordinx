@@ -1,0 +1,50 @@
+[
+  {
+    "file": "Electronic_ticket.pdf",
+    "vendor": "Air France",
+    "category": "flight",
+    "document_type": "ticket",
+    "date": "2024-07-07",
+    "total_amount": 0.0,
+    "currency": "EUR",
+    "ignore_amount": true,
+    "linked_invoice": "FactureAirFrance04072024.pdf"
+  },
+  {
+    "file": "FactureAirFrance04072024.pdf",
+    "vendor": "Air France",
+    "category": "flight",
+    "document_type": "invoice",
+    "date": "2024-07-04",
+    "total_amount": 259.88,
+    "currency": "EUR",
+    "payment_source": "personal",
+    "reimbursable": true
+  },
+  {
+    "file": "hotel.jpg",
+    "vendor": "Hotel",
+    "category": "hotel",
+    "document_type": "invoice",
+    "total_amount": 312.0,
+    "currency": "EUR",
+    "payment_source": "personal",
+    "reimbursable": true
+  },
+  {
+    "file": "Bolt_*.pdf",
+    "vendor": "Bolt",
+    "category": "taxi",
+    "document_type": "receipt",
+    "payment_source": "company",
+    "reimbursable": false
+  },
+  {
+    "file": "pice nogomet.jpg",
+    "vendor": "Restaurant",
+    "category": "other",
+    "document_type": "receipt",
+    "payment_source": "company",
+    "reimbursable": false
+  }
+]
